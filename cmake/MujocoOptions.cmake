@@ -79,6 +79,7 @@ else()
 endif()
 
 option(MUJOCO_BUILD_MACOS_FRAMEWORKS "Build libraries as macOS Frameworks" OFF)
+option(MUJOCO_INSTALL_PLUGINS "Install MuJoCo plugins" ON)
 
 # Get some extra link options.
 include(MujocoLinkOptions)

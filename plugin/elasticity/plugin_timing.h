@@ -12,20 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <mujoco/mjplugin.h>
-#include "cable.h"
-#include "shell.h"
-#include "wire.h"
-#include "wire_qst.h"
-// #include "wire2.h"
+#ifndef MUJOCO_PLUGIN_ELASTICITY_PLUGIN_TIMING_H_
+#define MUJOCO_PLUGIN_ELASTICITY_PLUGIN_TIMING_H_
+
+#include <mujoco/mjdata.h>
+#include <mujoco/mjmodel.h>
 
 namespace mujoco::plugin::elasticity {
 
-mjPLUGIN_LIB_INIT {
-  Cable::RegisterPlugin();
-  Shell::RegisterPlugin();
-  Wire::RegisterPlugin();
-  WireQST::RegisterPlugin();
-}
+// Get timing statistics for a plugin instance.
+// Returns 0 on success, -1 on error (invalid parameters), -2 if plugin doesn't support timing.
+// On success, total_time_ms, applyFT_time_ms, and call_count are filled.
+// applyFT_time_ms is the time spent in mj_applyFT calls; rest = total_time_ms - applyFT_time_ms.
+int mj_getPluginTiming(const mjModel* m, mjData* d, int instance,
+                       double* total_time_ms, double* applyFT_time_ms, int* call_count);
 
 }  // namespace mujoco::plugin::elasticity
+
+#endif  // MUJOCO_PLUGIN_ELASTICITY_PLUGIN_TIMING_H_
+

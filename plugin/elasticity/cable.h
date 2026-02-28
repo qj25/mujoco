@@ -39,6 +39,12 @@ class Cable {
 
   static void RegisterPlugin();
 
+  double total_compute_time_ms = 0.0;
+  double total_applyFT_time_ms = 0.0;
+  int compute_call_count = 0;
+  bool timing_enabled;
+  void PrintComputeTiming();
+
   int i0;                         // index of first body
   int n;                          // number of bodies in the cable
   std::vector<int> prev;          // indices of previous bodies   (n x 1)

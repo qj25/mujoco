@@ -28,6 +28,8 @@ typedef enum _mjtCompType {
   mjCOMPTYPE_PARTICLE = 0,
   mjCOMPTYPE_GRID,
   mjCOMPTYPE_CABLE,
+  mjCOMPTYPE_WIRE,
+  mjCOMPTYPE_WIREQST,
   mjCOMPTYPE_ROPE,
   mjCOMPTYPE_LOOP,
   mjCOMPTYPE_CLOTH,
@@ -63,6 +65,7 @@ class mjCComposite {
 
   bool Make(mjSpec* spec, mjsBody* body, char* error, int error_sz);
   bool MakeCable(mjCModel* model, mjsBody* body, char* error, int error_sz);
+  bool MakeWire(mjCModel* model, mjsBody* body, char* error, int error_sz);
 
   void MakeSkin2(mjCModel* model, mjtNum inflate);
   void MakeSkin2Subgrid(mjCModel* model, mjtNum inflate);
@@ -110,6 +113,7 @@ class mjCComposite {
 
  private:
   mjsBody* AddCableBody(mjCModel* model, mjsBody* body, int ix, double normal[3], double prev_quat[4]);
+  mjsBody* AddWireBody(mjCModel* model, mjsBody* body, int ix, double normal[3], double prev_quat[4]);
 
   // temporary skin vectors
   void CopyIntoSkin(mjsSkin* skin);

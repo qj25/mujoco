@@ -22,11 +22,20 @@
 
 #include <cctype>
 #include <cstdio>
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <new>
 #include <string>
 #include <string_view>
+
+// Include plugin headers for timing access
+// These are optional - if plugins aren't built, this will fail at link time
+// In that case, the function will return -2 (plugin doesn't support timing)
+#ifdef MUJOCO_PLUGIN_ELASTICITY_AVAILABLE
+#include "plugin/elasticity/cable.h"
+#include "plugin/elasticity/wire.h"
+#endif
 
 extern "C" {
 #if defined(_WIN32) || defined(__CYGWIN__)

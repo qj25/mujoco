@@ -61,6 +61,7 @@ from mujoco._specs import *
 from mujoco._structs import *
 from mujoco.gl_context import *
 from mujoco.renderer import Renderer
+from mujoco.timing import mj_step_timed
 
 MjStruct: TypeAlias = Union[
     _specs.MjsBody,

@@ -16,20 +16,52 @@ set(MUJOCO_ELASTICITY_INCLUDE ${CMAKE_CURRENT_SOURCE_DIR}/../..
                               ${CMAKE_CURRENT_SOURCE_DIR}/../../src
 )
 
+# Add Eigen3
+add_compile_definitions(EIGEN_MPL2_ONLY)
+findorfetch(
+  USE_SYSTEM_PACKAGE
+  OFF
+  PACKAGE_NAME
+  Eigen3
+  LIBRARY_NAME
+  eigen
+  GIT_REPO
+  https://gitlab.com/libeigen/eigen
+  GIT_TAG
+  464c1d097891a1462ab28bf8bb763c1683883892
+  TARGETS
+  Eigen3::Eigen
+  EXCLUDE_FROM_ALL
+)
+
 set(MUJOCO_ELASTICITY_SRCS
     cable.cc
     cable.h
     elasticity.cc
     elasticity.h
+    plugin_timing.cc
+    plugin_timing.h
     register.cc
     shell.cc
     shell.h
+    wire.cc
+    wire.h
+    wire_utils.cc
+    wire_utils.h
+    wire_qst.cc
+    wire_qst.h
+    # wire2.cc
+    # wire2.h
 )
 
+# Create the target first
 add_library(elasticity SHARED)
 target_sources(elasticity PRIVATE ${MUJOCO_ELASTICITY_SRCS})
-target_include_directories(elasticity PRIVATE ${MUJOCO_ELASTICITY_INCLUDE})
-target_link_libraries(elasticity PRIVATE mujoco)
+
+# Then add include directories and link libraries
+target_include_directories(elasticity PRIVATE ${MUJOCO_ELASTICITY_INCLUDE} ${EIGEN3_INCLUDE_DIR})
+target_link_libraries(elasticity PRIVATE mujoco Eigen3::Eigen)
+
 target_compile_options(
   elasticity
   PRIVATE ${AVX_COMPILE_OPTIONS}

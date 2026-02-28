@@ -16,6 +16,8 @@
 #include <cstddef>
 #include <sstream>
 #include <optional>
+#include <iostream>
+#include <chrono>
 
 #include <mujoco/mjplugin.h>
 #include <mujoco/mjtnum.h>
@@ -115,7 +117,6 @@ bool CheckAttr(const char* name, const mjModel* m, int instance) {
 
 }  // namespace
 
-
 // factory function
 std::optional<Cable> Cable::Create(
   const mjModel* m, mjData* d, int instance) {
@@ -155,6 +156,9 @@ Cable::Cable(const mjModel* m, mjData* d, int instance) {
   mju_zero(d->mocap_quat, 4*m->nmocap);
   mju_copy(d->qpos, m->qpos0, m->nq);
   mj_kinematics(m, d);
+
+  // Timing setting
+  timing_enabled = false;
 
   // compute initial curvature
   for (int b = 0; b < n; b++) {
@@ -203,6 +207,9 @@ Cable::Cable(const mjModel* m, mjData* d, int instance) {
 }
 
 void Cable::Compute(const mjModel* m, mjData* d, int instance) {
+  using namespace std::chrono;
+  high_resolution_clock::time_point start, end;
+  if (timing_enabled) start = high_resolution_clock::now();
   for (int b = 0; b < n; b++)  {
     // index into body array
     int i = i0 + b;
@@ -248,7 +255,20 @@ void Cable::Compute(const mjModel* m, mjData* d, int instance) {
     // convert from global coordinates and apply torque to com
     mjtNum xfrc[3] = {0};
     mju_rotVecQuat(xfrc, lfrc, d->xquat+4*i);
-    mj_applyFT(m, d, 0, xfrc, d->xpos+3*i, i, d->qfrc_passive);
+    if (timing_enabled) {
+      high_resolution_clock::time_point t0_ft = high_resolution_clock::now();
+      mj_applyFT(m, d, 0, xfrc, d->xpos+3*i, i, d->qfrc_passive);
+      high_resolution_clock::time_point t1_ft = high_resolution_clock::now();
+      total_applyFT_time_ms += duration<double, std::milli>(t1_ft - t0_ft).count();
+    } else {
+      mj_applyFT(m, d, 0, xfrc, d->xpos+3*i, i, d->qfrc_passive);
+    }
+  }
+  if (timing_enabled) {
+    end = high_resolution_clock::now();
+    double elapsed = duration<double, std::milli>(end - start).count();
+    this->total_compute_time_ms += elapsed;
+    this->compute_call_count++;
   }
 }
 
@@ -294,7 +314,9 @@ void Cable::RegisterPlugin() {
 return 0;
   };
   plugin.destroy = +[](mjData* d, int instance) {
-    delete reinterpret_cast<Cable*>(d->plugin_data[instance]);
+    auto* elasticity = reinterpret_cast<Cable*>(d->plugin_data[instance]);
+    elasticity->PrintComputeTiming();
+    delete elasticity;
     d->plugin_data[instance] = 0;
   };
   plugin.compute =
@@ -309,6 +331,14 @@ return 0;
   };
 
   mjp_registerPlugin(&plugin);
+}
+
+// Print timing info at plugin destruction
+void Cable::PrintComputeTiming() {
+  if (!timing_enabled) return;
+  std::cout << "[Cable] Compute called " << compute_call_count << " times. "
+            << "Total time: " << total_compute_time_ms << " ms. "
+            << "Average time: " << (compute_call_count ? (total_compute_time_ms / compute_call_count) : 0.0) << " ms." << std::endl;
 }
 
 }  // namespace mujoco::plugin::elasticity
