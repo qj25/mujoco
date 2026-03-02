@@ -60,6 +60,23 @@ bool CheckAttr(const char* name, const mjModel* m, int instance) {
   return end == value.data() + value.size();
 }
 
+bool parseBoolOrDefault(const char* flag_str, bool default_value) {
+  if (!flag_str || flag_str[0] == '\0') return default_value;
+
+  std::string val = flag_str;
+  std::transform(val.begin(), val.end(), val.begin(), ::tolower);  // case-insensitive
+
+  if (val == "true" || val == "1") {
+      return true;
+  } else if (val == "false" || val == "0") {
+      return false;
+  } else {
+      mju_warning("Invalid boolean value: '%s'. Using default (%s).", 
+                  flag_str, default_value ? "true" : "false");
+      return default_value;
+  }
+}
+
 }  // namespace
 
 // Factory function
@@ -116,7 +133,8 @@ WireQST::WireQST(const mjModel* m, mjData* d, int instance) {
   theta_displace = p_thetan;
 
   // Timer stuff
-  timing_enabled = false;
+  timing_enabled = parseBoolOrDefault(mj_getPluginConfig(m, instance, "timingEnabled"), false);
+  pluginEnabled = parseBoolOrDefault(mj_getPluginConfig(m, instance, "pluginEnabled"), true);
 
   // compute initial curvature and material properties
   for (int b = 0; b < n; b++) {
@@ -196,6 +214,7 @@ void WireQST::updateVars(mjData* d) {
 }
 
 void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
+  if (!pluginEnabled) return;
   using namespace std::chrono;
   high_resolution_clock::time_point start, end;
   if (timing_enabled) start = high_resolution_clock::now();
@@ -347,7 +366,7 @@ void WireQST::RegisterPlugin() {
   plugin.name = "mujoco.elasticity.wire_qst";
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
-  const char* attributes[] = {"twist", "bend", "flat", "vmax", "twist_displace"};
+  const char* attributes[] = {"twist", "bend", "flat", "vmax", "twist_displace", "timingEnabled", "pluginEnabled"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;
   plugin.nstate = +[](const mjModel* m, int instance) { return 0; };

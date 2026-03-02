@@ -90,6 +90,7 @@ class Wire {
   bool boolThetaOpt;                   // set to true to activate theta optimization with Newton's method
   bool boolIsoStr8;                   // check if bend stiffness is straight isotropic
   bool timing_enabled;
+  bool pluginEnabled;
   bool calcEnergy;
   bool fullDyn;
 

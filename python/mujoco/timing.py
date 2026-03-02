@@ -15,48 +15,81 @@
 """Timing utilities for MuJoCo plugin execution."""
 
 import ctypes
+import ctypes.util
 import os
+import sys
 from typing import Dict, List, Optional
 
 from mujoco._functions import mj_step as _mj_step
 from mujoco._structs import MjData, MjModel
 
 
-def _load_timing_libraries() -> List[ctypes.CDLL]:
-  """Load plugin libraries that export mj_getPluginTiming."""
-  libs: List[ctypes.CDLL] = []
+# Try to get mj_getPluginTiming from already-loaded libraries
+# The plugin library is already loaded by MuJoCo, so we can access it via ctypes
+_GET_PLUGIN_TIMING_FUNC = None
+
+def _get_plugin_timing_func():
+  """Get mj_getPluginTiming function from loaded libraries."""
+  global _GET_PLUGIN_TIMING_FUNC
+  if _GET_PLUGIN_TIMING_FUNC is not None:
+    return _GET_PLUGIN_TIMING_FUNC
+  
+  # Helper to configure and return the function
+  def _configure_func(func):
+    func.argtypes = [
+        ctypes.c_void_p,  # const mjModel*
+        ctypes.c_void_p,  # mjData*
+        ctypes.c_int,     # instance
+        ctypes.POINTER(ctypes.c_double),  # total_time_ms
+        ctypes.POINTER(ctypes.c_double),  # applyFT_time_ms
+        ctypes.POINTER(ctypes.c_int),     # call_count
+    ]
+    func.restype = ctypes.c_int
+    _GET_PLUGIN_TIMING_FUNC = func
+    return func
+  
+  # Approach 1: Check MJPLUGIN_PATH environment variable (build directory)
+  mjplugin_path = os.environ.get("MJPLUGIN_PATH", "")
+  if mjplugin_path and os.path.isdir(mjplugin_path):
+    # Look for libelasticity.so in that directory
+    for libname in ["libelasticity.so", "libelasticity.dll", "libelasticity.dylib"]:
+      libpath = os.path.join(mjplugin_path, libname)
+      if os.path.isfile(libpath):
+        try:
+          handle = ctypes.CDLL(libpath)
+          func = getattr(handle, "mj_getPluginTiming")
+          # print(f"[_get_plugin_timing_func] Found in MJPLUGIN_PATH: {libpath}", file=sys.stderr, flush=True)
+          return _configure_func(func)
+        except (OSError, AttributeError):
+          continue
+  
+  # Approach 2: Try the current process (where plugins are already loaded)
+  try:
+    handle = ctypes.CDLL(None)  # Current process
+    func = getattr(handle, "mj_getPluginTiming")
+    # print(f"[_get_plugin_timing_func] Found in current process", file=sys.stderr, flush=True)
+    return _configure_func(func)
+  except AttributeError:
+    pass
+  
+  # Approach 3: Try loading from plugin directory (standard pip install location)
   plugin_dir = os.path.join(os.path.dirname(__file__), "plugin")
-  if not os.path.isdir(plugin_dir):
-    return libs
-
-  for directory, _, filenames in os.walk(plugin_dir):
-    for filename in filenames:
-      if not filename.endswith((".so", ".dll", ".dylib")):
-        continue
-      path = os.path.join(directory, filename)
-      try:
-        handle = ctypes.CDLL(path)
-      except OSError:
-        continue
-      try:
-        func = getattr(handle, "mj_getPluginTiming")
-      except AttributeError:
-        continue
-      # Configure prototype once (total_time_ms, applyFT_time_ms, call_count)
-      func.argtypes = [
-          ctypes.c_void_p,  # const mjModel*
-          ctypes.c_void_p,  # mjData*
-          ctypes.c_int,     # instance
-          ctypes.POINTER(ctypes.c_double),  # total_time_ms
-          ctypes.POINTER(ctypes.c_double),  # applyFT_time_ms
-          ctypes.POINTER(ctypes.c_int),     # call_count
-      ]
-      func.restype = ctypes.c_int
-      libs.append(handle)
-  return libs
-
-
-_TIMING_LIBS: List[ctypes.CDLL] = _load_timing_libraries()
+  if os.path.isdir(plugin_dir):
+    for directory, _, filenames in os.walk(plugin_dir):
+      for filename in filenames:
+        if not filename.endswith((".so", ".dll", ".dylib")):
+          continue
+        path = os.path.join(directory, filename)
+        try:
+          handle = ctypes.CDLL(path)
+          func = getattr(handle, "mj_getPluginTiming")
+          # print(f"[_get_plugin_timing_func] Found in plugin directory: {path}", file=sys.stderr, flush=True)
+          return _configure_func(func)
+        except (OSError, AttributeError):
+          continue
+  
+  # print(f"[_get_plugin_timing_func] All approaches failed, returning None", file=sys.stderr, flush=True)
+  return None
 
 
 def _get_plugin_timing_for_instance(
@@ -65,9 +98,9 @@ def _get_plugin_timing_for_instance(
     instance: int,
 ) -> Optional[Dict[str, float]]:
   """Call mj_getPluginTiming for one plugin instance, if available."""
-  if not _TIMING_LIBS:
+  func = _get_plugin_timing_func()
+  if func is None:
     return None
-
   m_ptr = ctypes.c_void_p(model._address)  # type: ignore[attr-defined]
   d_ptr = ctypes.c_void_p(data._address)   # type: ignore[attr-defined]
 
@@ -75,27 +108,21 @@ def _get_plugin_timing_for_instance(
   applyFT_time = ctypes.c_double(0.0)
   call_count = ctypes.c_int(0)
 
-  for handle in _TIMING_LIBS:
-    try:
-      func = getattr(handle, "mj_getPluginTiming")
-    except AttributeError:
-      continue
-    result = func(m_ptr, d_ptr, instance,
-                  ctypes.byref(total_time), ctypes.byref(applyFT_time),
-                  ctypes.byref(call_count))
-    if result == 0 and call_count.value > 0:
-      avg_time = (
-          total_time.value / call_count.value if call_count.value > 0 else 0.0
-      )
-      rest_time = total_time.value - applyFT_time.value
-      return {
-          "instance": float(instance),
-          "total_time_ms": total_time.value,
-          "applyFT_time_ms": applyFT_time.value,
-          "rest_time_ms": rest_time,
-          "call_count": float(call_count.value),
-          "avg_time_ms": avg_time,
-      }
+  result = func(m_ptr, d_ptr, instance,
+                ctypes.byref(total_time), ctypes.byref(applyFT_time),
+                ctypes.byref(call_count))
+  
+  if result == 0 and call_count.value > 0:
+    avg_time = total_time.value / call_count.value if call_count.value > 0 else 0.0
+    rest_time = total_time.value - applyFT_time.value
+    return {
+        "instance": float(instance),
+        "total_time_ms": total_time.value,
+        "applyFT_time_ms": applyFT_time.value,
+        "rest_time_ms": rest_time,
+        "call_count": float(call_count.value),
+        "avg_time_ms": avg_time,
+    }
   return None
 
 

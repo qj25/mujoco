@@ -43,6 +43,7 @@ class Cable {
   double total_applyFT_time_ms = 0.0;
   int compute_call_count = 0;
   bool timing_enabled;
+  bool pluginEnabled;
   void PrintComputeTiming();
 
   int i0;                         // index of first body

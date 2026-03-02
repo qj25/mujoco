@@ -15,6 +15,7 @@
 #include "plugin_timing.h"
 
 #include <cstring>
+#include <iostream>
 
 #include <mujoco/mjexport.h>
 #include <mujoco/mjdata.h>
@@ -48,7 +49,6 @@ static int GetPluginTimingInternal(const mjModel* m, mjData* d, int instance,
   if (!plugin || !plugin->name) {
     return -1;  // Invalid plugin
   }
-
   // Get plugin data pointer
   if (!d->plugin_data || !d->plugin_data[instance]) {
     *total_time_ms = 0.0;

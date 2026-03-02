@@ -95,6 +95,7 @@ Wire::Wire(const mjModel* m, mjData* d, int instance) {
   boolThetaOpt = parseBoolOrDefault(mj_getPluginConfig(m, instance, "boolThetaOpt"), false); // true for theta optimization with Newton's method (slower)
   boolIsoStr8 = parseBoolOrDefault(mj_getPluginConfig(m, instance, "boolIsoStr8"), true); // true if straight isotropic rod
   timing_enabled = parseBoolOrDefault(mj_getPluginConfig(m, instance, "timingEnabled"), false);
+  pluginEnabled = parseBoolOrDefault(mj_getPluginConfig(m, instance, "pluginEnabled"), true);
   calcEnergy = parseBoolOrDefault(mj_getPluginConfig(m, instance, "calcEnergy"), false);
   fullDyn = parseBoolOrDefault(mj_getPluginConfig(m, instance, "fullDyn"), false);
   
@@ -241,6 +242,7 @@ void Wire::updateVars(mjData* d) {
 }
 
 void Wire::Compute(const mjModel* m, mjData* d, int instance) {
+  if (!pluginEnabled) return;
   using namespace std::chrono;
   high_resolution_clock::time_point start, end;
   if (timing_enabled) start = high_resolution_clock::now();
@@ -644,8 +646,8 @@ void Wire::RegisterPlugin() {
     "twist", "bend", "flat",
     "vmax", "twist_displace",
     "pqsActive", "boolThetaOpt",
-    "boolIsoStr8", "timingenabled",
-    "calcEnergy", "fullDyn"
+    "boolIsoStr8", "timingEnabled",
+    "calcEnergy", "fullDyn", "pluginEnabled"
   };
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;

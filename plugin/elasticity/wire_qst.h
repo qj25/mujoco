@@ -88,6 +88,7 @@ class WireQST {
   double total_applyFT_time_ms = 0.0;  // WireQST uses direct qfrc_passive; always 0
   int compute_call_count = 0;
   bool timing_enabled;
+  bool pluginEnabled;
   void PrintComputeTiming();
 
  private:

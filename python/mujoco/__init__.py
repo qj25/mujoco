@@ -62,6 +62,8 @@ from mujoco._structs import *
 from mujoco.gl_context import *
 from mujoco.renderer import Renderer
 from mujoco.timing import mj_step_timed
+import sys
+print(f"[mujoco.__init__] Imported mj_step_timed from: {sys.modules['mujoco.timing'].__file__}", file=sys.stderr, flush=True)
 
 MjStruct: TypeAlias = Union[
     _specs.MjsBody,
