@@ -97,6 +97,7 @@ WireQST::WireQST(const mjModel* m, mjData* d, int instance) {
   mjtNum E = strtod(mj_getPluginConfig(m, instance, "bend"), nullptr);
   vmax = strtod(mj_getPluginConfig(m, instance, "vmax"), nullptr);
   p_thetan = strtod(mj_getPluginConfig(m, instance, "twist_displace"), nullptr);
+  der_og = parseBoolOrDefault(mj_getPluginConfig(m, instance, "der_og"), false);
 
   // count plugin bodies
   n = 0;
@@ -165,6 +166,9 @@ WireQST::WireQST(const mjModel* m, mjData* d, int instance) {
     }
     alpha_bar = Iy * E;
     beta_bar = J * G;
+    if (der_og) {
+      edges[b].beta = beta_bar;
+    }
   }
   // Get joint velocity addresses for first and lastwire bodies
   int body_id = i0 + 1; // +1 because 0th body has no joint
@@ -178,6 +182,9 @@ WireQST::WireQST(const mjModel* m, mjData* d, int instance) {
   InitBishopFrame();
   InitO2M(d);
   transfBF();
+  if (der_og) {
+    updateMatFrame();
+  }
 }
 
 void WireQST::updateVars(mjData* d) {
@@ -224,6 +231,10 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
   // Update theta_n
   theta_n = get_thetan(d);
   updateTheta(theta_n);
+  // Update material frame
+  if (der_og) {
+    updateMatFrame();
+  }
 
   // populate rest of distance matrix
   for (int i = 2; i < (nv+2); i++) {
@@ -245,6 +256,7 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
   }
 
   // Calculate forces using DER logic
+  double applyFT_elapsed_ms = 0.0;
   for (int i = 1; i < nv + 1; i++) {
     // Calculate curvature
     nodes[i].phi_i = WireUtils::calculateAngleBetween(edges[i-1].e, edges[i].e);
@@ -285,11 +297,13 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
         2. * alpha_bar
         * nodes[i].nabkb[j-i+1].transpose() * nodes[i].kb
       ) / edges[i].l_bar;
-      nodes[j].force += (
-        beta_bar * (edges[nv].theta - edges[0].theta)
-        * nodes[i].nabpsi.row(j-i+1)
-      ) / bigL_bar;
-      // std::cout << j << std::endl;
+      if (!der_og) {
+        nodes[j].force += (
+            beta_bar * (edges[nv].theta - edges[0].theta)
+            * nodes[i].nabpsi.row(j-i+1)
+          ) / bigL_bar;
+      }
+    // std::cout << j << std::endl;
       // if (j == 0) {
       //     std::cout << nodes[j].force << std::endl;
       // }
@@ -306,6 +320,31 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
       //   std::cin.get();
       // }
     }
+
+    if (der_og) {
+      double torqtmp_x;
+      torqtmp_x -= 2.0 * (
+        edges[i].beta * (edges[i].theta - edges[i-1].theta) / edges[i].l_bar
+      );
+      if (i < nv) {
+        torqtmp_x -= 2.0 * (
+          - edges[i+1].beta * (edges[i+1].theta - edges[i].theta) / edges[i+1].l_bar
+        );
+      }
+      mjtNum torqtmp_local[3] = {torqtmp_x, 0.0, 0.0};
+      mjtNum torqtmp_global[3] = {0};
+      Eigen::Quaterniond q_body(nodes[i].matframe);
+      mjtNum material_quat[4] = {q_body.w(), q_body.x(), q_body.y(), q_body.z()};
+      mju_rotVecQuat(torqtmp_global, torqtmp_local, material_quat);
+      if (timing_enabled) {
+        high_resolution_clock::time_point t0 = high_resolution_clock::now();
+        mj_applyFT(m, d, 0, torqtmp_global, d->xpos+3*i, i, d->qfrc_passive);
+        high_resolution_clock::time_point t1 = high_resolution_clock::now();
+        applyFT_elapsed_ms += duration<double, std::milli>(t1 - t0).count();
+      } else {
+        mj_applyFT(m, d, 0, torqtmp_global, d->xpos+3*i, i, d->qfrc_passive);
+      }
+    }
     // // Check for NaN in nodes[i].force
     // if ((nodes[i].force.array().isNaN()).any()) {
     //   std::cerr << "[WireQST] ERROR: NaN detected in nodes[" << i << "].force: "
@@ -313,6 +352,10 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
     //   std::cerr << "Pausing execution. Press Enter to continue..." << std::endl;
     //   std::cin.get();
     // }
+  }
+  
+  if (timing_enabled) {
+    total_applyFT_time_ms += applyFT_elapsed_ms;
   }
 
   // Calculate torques using distance matrix
@@ -366,7 +409,7 @@ void WireQST::RegisterPlugin() {
   plugin.name = "mujoco.elasticity.wire_qst";
   plugin.capabilityflags |= mjPLUGIN_PASSIVE;
 
-  const char* attributes[] = {"twist", "bend", "flat", "vmax", "twist_displace", "timingEnabled", "pluginEnabled"};
+  const char* attributes[] = {"twist", "bend", "flat", "vmax", "twist_displace", "der_og", "timingEnabled", "pluginEnabled"};
   plugin.nattribute = sizeof(attributes) / sizeof(attributes[0]);
   plugin.attributes = attributes;
   plugin.nstate = +[](const mjModel* m, int instance) { return 0; };
@@ -550,6 +593,29 @@ double WireQST::updateTheta(double theta_n) {
     edges[i].theta = d_theta * i;
   }
   return edges[nv].theta;
+}
+
+void WireQST::updateMatFrame() {
+  // updates the materialframe of the edges
+  // based on the twist angles 
+  for (int i = 0; i < nv+1; i++) {
+    // assign x-axis of bishop frame to x-axis of material frame
+    nodes[i].matframe.col(0) = edges[i].bf.col(0);
+    
+    // twist y-axis of bishop frame by theta
+    // about the x-axis of the bishop frame
+    double cos_theta = std::cos(edges[i].theta);
+    double sin_theta = std::sin(edges[i].theta);
+    nodes[i].matframe.col(1) = cos_theta * edges[i].bf.col(1) + sin_theta * edges[i].bf.col(2);
+
+    // get z-axis of material frame by x.cross(y)
+    nodes[i].matframe.col(2) = nodes[i].matframe.col(0).cross(nodes[i].matframe.col(1));
+
+    // make sure all axes are normalized
+    nodes[i].matframe.col(0).normalize();
+    nodes[i].matframe.col(1).normalize();
+    nodes[i].matframe.col(2).normalize();
+  }
 }
 
 // Print timing info at plugin destruction

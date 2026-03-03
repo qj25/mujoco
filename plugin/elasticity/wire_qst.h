@@ -23,6 +23,7 @@ struct NodeQST {
   double phi_i;
   double k;
   Eigen::Vector3d kb;
+  Eigen::Matrix3d matframe;
   std::vector<Eigen::Matrix3d, Eigen::aligned_allocator<Eigen::Matrix3d>> nabkb;
   Eigen::Matrix3d nabpsi;
 };
@@ -31,6 +32,7 @@ struct NodeQST {
 struct EdgeQST {
   Eigen::Vector3d e;
   Eigen::Matrix3d bf;
+  double beta;         // twist stiffness
   double theta;
   double e_bar;
   double l_bar;
@@ -53,6 +55,8 @@ class WireQST {
   int i0;                         // index of first body
   int n;                          // number of bodies in the wire
   mjtNum vmax;                    // max value in colormap
+
+  bool der_og;                    // original derivative calculation
 
   // DER cpp variables
   int qvel0_addr = -1;
@@ -83,6 +87,7 @@ class WireQST {
   void updateThetaN(double theta_n);
   double updateTheta(double theta_n);
   void updateVars(mjData* d);
+  void updateMatFrame();
 
   double total_compute_time_ms = 0.0;
   double total_applyFT_time_ms = 0.0;  // WireQST uses direct qfrc_passive; always 0

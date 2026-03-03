@@ -15,6 +15,7 @@
 #include "engine/engine_support.h"
 
 #include <stddef.h>
+#include <time.h>
 
 #include <mujoco/mjdata.h>
 #include <mujoco/mjmodel.h>
@@ -534,9 +535,11 @@ void mj_jacSparse(const mjModel* m, const mjData* d,
     mju_zero(jacr, 3*NV);
   }
 
-  // compute point-com offset
+  // compute point-com offset (only needed for jacp)
   mjtNum offset[3];
-  mju_sub3(offset, point, d->subtree_com+3*m->body_rootid[body]);
+  if (jacp) {
+    mju_sub3(offset, point, d->subtree_com+3*m->body_rootid[body]);
+  }
 
   // skip fixed bodies
   while (body && !m->body_dofnum[body]) {
@@ -1198,6 +1201,119 @@ void mj_addMDense(const mjModel* m, mjData* d, mjtNum* dst) {
 
 //-------------------------- perturbations ---------------------------------------------------------
 
+// add Cartesian force and torque to qfrc_target (timed version)
+void mj_applyFT_timed(const mjModel* m, mjData* d,
+                      const mjtNum force[3], const mjtNum torque[3],
+                      const mjtNum point[3], int body, mjtNum* qfrc_target) {
+  int nv = m->nv;
+  struct timespec ts_start, ts_end;  // for timing instrumentation
+
+  // allocate local variables
+  mj_markStack(d);
+  mjtNum* jacp = force ? mjSTACKALLOC(d, 3*nv, mjtNum) : NULL;
+  mjtNum* jacr = torque ? mjSTACKALLOC(d, 3*nv, mjtNum) : NULL;
+  mjtNum* qforce = mjSTACKALLOC(d, nv, mjtNum);
+
+  // make sure body is in range
+  if (body < 0 || body >= m->nbody) {
+    mjERROR("invalid body %d", body);
+  }
+
+  // sparse case
+  if (mj_isSparse(m)) {
+    // construct chain and sparse Jacobians
+    int* chain = mjSTACKALLOC(d, nv, int);
+    int NV = mj_bodyChain(m, body, chain);
+    
+    // TIMING: mj_jacSparse
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+    mj_jacSparse(m, d, jacp, jacr, point, body, NV, chain);
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double jacSparse_time = (ts_end.tv_sec - ts_start.tv_sec) + 
+                            (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+    
+    // compute J'*f and accumulate
+    if (force) {
+      // TIMING: mju_mulMatTVec for force
+      clock_gettime(CLOCK_MONOTONIC, &ts_start);
+      mju_mulMatTVec(qforce, jacp, force, 3, NV);
+      clock_gettime(CLOCK_MONOTONIC, &ts_end);
+      double mulMatTVec_force_time = (ts_end.tv_sec - ts_start.tv_sec) + 
+                                      (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+      mju_warning("[mj_applyFT] body=%d sparse: jacSparse=%.6f us, mulMatTVec(force)=%.6f us", 
+                  body, jacSparse_time*1e6, mulMatTVec_force_time*1e6);
+      
+      for (int i=0; i < NV; i++) {
+        qfrc_target[chain[i]] += qforce[i];
+      }
+    }
+    if (torque) {
+      // TIMING: mju_mulMatTVec for torque
+      clock_gettime(CLOCK_MONOTONIC, &ts_start);
+      mju_mulMatTVec(qforce, jacr, torque, 3, NV);
+      clock_gettime(CLOCK_MONOTONIC, &ts_end);
+      double mulMatTVec_torque_time = (ts_end.tv_sec - ts_start.tv_sec) + 
+                                       (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+      if (!force) {
+        mju_warning("[mj_applyFT] body=%d sparse: jacSparse=%.6f us, mulMatTVec(torque)=%.6f us", 
+                    body, jacSparse_time*1e6, mulMatTVec_torque_time*1e6);
+      } else {
+        mju_warning("[mj_applyFT] body=%d sparse: mulMatTVec(torque)=%.6f us", 
+                    body, mulMatTVec_torque_time*1e6);
+      }
+      
+      for (int i=0; i < NV; i++) {
+        qfrc_target[chain[i]] += qforce[i];
+      }
+    }
+  }
+
+  // dense case
+  else {
+    // compute Jacobians
+    // TIMING: mj_jac
+    clock_gettime(CLOCK_MONOTONIC, &ts_start);
+    mj_jac(m, d, jacp, jacr, point, body);
+    clock_gettime(CLOCK_MONOTONIC, &ts_end);
+    double jac_time = (ts_end.tv_sec - ts_start.tv_sec) + 
+                      (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+
+    // compute J'*f and accumulate
+    if (force) {
+      // TIMING: mju_mulMatTVec for force
+      clock_gettime(CLOCK_MONOTONIC, &ts_start);
+      mju_mulMatTVec(qforce, jacp, force, 3, nv);
+      clock_gettime(CLOCK_MONOTONIC, &ts_end);
+      double mulMatTVec_force_time = (ts_end.tv_sec - ts_start.tv_sec) + 
+                                      (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+      mju_warning("[mj_applyFT] body=%d dense: mj_jac=%.6f us, mulMatTVec(force)=%.6f us", 
+                  body, jac_time*1e6, mulMatTVec_force_time*1e6);
+      
+      mju_addTo(qfrc_target, qforce, nv);
+    }
+    if (torque) {
+      // TIMING: mju_mulMatTVec for torque
+      clock_gettime(CLOCK_MONOTONIC, &ts_start);
+      mju_mulMatTVec(qforce, jacr, torque, 3, nv);
+      clock_gettime(CLOCK_MONOTONIC, &ts_end);
+      double mulMatTVec_torque_time = (ts_end.tv_sec - ts_start.tv_sec) + 
+                                       (ts_end.tv_nsec - ts_start.tv_nsec) * 1e-9;
+      if (!force) {
+        mju_warning("[mj_applyFT] body=%d dense: mj_jac=%.6f us, mulMatTVec(torque)=%.6f us", 
+                    body, jac_time*1e6, mulMatTVec_torque_time*1e6);
+      } else {
+        mju_warning("[mj_applyFT] body=%d dense: mulMatTVec(torque)=%.6f us", 
+                    body, mulMatTVec_torque_time*1e6);
+      }
+      
+      mju_addTo(qfrc_target, qforce, nv);
+    }
+  }
+
+  mj_freeStack(d);
+}
+
+
 // add Cartesian force and torque to qfrc_target
 void mj_applyFT(const mjModel* m, mjData* d,
                 const mjtNum force[3], const mjtNum torque[3],
@@ -1252,7 +1368,6 @@ void mj_applyFT(const mjModel* m, mjData* d,
       mju_addTo(qfrc_target, qforce, nv);
     }
   }
-
   mj_freeStack(d);
 }
 
