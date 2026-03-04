@@ -354,10 +354,11 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
     // }
   }
   
-  if (timing_enabled) {
-    total_applyFT_time_ms += applyFT_elapsed_ms;
-  }
-
+  // high_resolution_clock::time_point t2;
+  // high_resolution_clock::time_point t3;
+  // if (timing_enabled) {
+  //   t2 = high_resolution_clock::now();
+  // }
   // Calculate torques using distance matrix
   Eigen::Matrix<double, Eigen::Dynamic, 3> torqvec(nv + 2, 3);
   Eigen::Matrix<double, Eigen::Dynamic, 3> torqvec_indiv(nv+2, 3);
@@ -374,7 +375,7 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
       WireUtils::inverseQuat(nodes[i].quat)
     );
   }
-
+  
   // Apply forces and torques to MuJoCo bodies
   // Apply all torques at once to qfrc_passive
   int num_dofs = qvellast_addr - qvel0_addr + 3;  // +3 because we include the full id for the last piece
@@ -382,6 +383,13 @@ void WireQST::Compute(const mjModel* m, mjData* d, int instance) {
     d->qfrc_passive[qvel0_addr + i] += nodes[i/3 + 1].torq[i%3];
   }
   if (timing_enabled) {
+    // t3 = high_resolution_clock::now();
+    // Do not include force-lever computation inside
+    // applyFT_elapsed_ms += duration<double, std::milli>(t3 - t2).count();
+    total_applyFT_time_ms += applyFT_elapsed_ms;
+    std::cerr << "[WireQST] Compute time for force-lever: "
+              << applyFT_elapsed_ms << "ms" << std::endl;
+
     end = high_resolution_clock::now();
     double elapsed = duration<double, std::milli>(end - start).count();
     total_compute_time_ms += elapsed;
